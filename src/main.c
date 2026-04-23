@@ -212,7 +212,10 @@ static void session_finalize(device_demo_session_t *session, const char *reason)
 
     device_demo_streamer_destroy(session->streamer);
     pthread_mutex_destroy(&session->mutex);
-    log_message(stdout, "connection resources released (%s)", reason);
+    log_message(stdout,
+                "connection resources released: hconn=%p (%s)",
+                (void *)session->hconn,
+                reason);
     free(session);
 }
 
@@ -266,7 +269,10 @@ static void schedule_session_disconnect(device_demo_session_t *session,
         return;
     }
     pthread_detach(thread);
-    log_message(stdout, "connection cleanup scheduled (%s)", reason);
+    log_message(stdout,
+                "connection cleanup scheduled: hconn=%p (%s)",
+                (void *)session->hconn,
+                reason);
 }
 
 typedef struct {
@@ -368,8 +374,10 @@ static void on_event(int event, const void *data, int len)
 static void on_conn_accepted(tirtc_conn_t hconn)
 {
     device_demo_session_t *previous_session;
-    device_demo_session_t *session = create_session(hconn);
+    device_demo_session_t *session;
 
+    log_message(stdout, "client connection accepted: hconn=%p", (void *)hconn);
+    session = create_session(hconn);
     if (session == NULL) {
         schedule_raw_disconnect(hconn);
         return;
@@ -383,8 +391,9 @@ static void on_conn_accepted(tirtc_conn_t hconn)
     pthread_mutex_unlock(&g_app.mutex);
 
     device_demo_streamer_set_streaming_enabled(session->streamer, 1);
-    device_demo_streamer_request_key_frame(session->streamer);
-    log_message(stdout, "client connected and streaming started immediately: hconn=%p", (void *)hconn);
+    log_message(stdout,
+                "streaming enabled for accepted client: hconn=%p",
+                (void *)hconn);
     if (previous_session != NULL && previous_session != session) {
         log_message(stdout, "replacing previous active connection");
         schedule_session_disconnect(previous_session, "connection replacement");
@@ -397,7 +406,8 @@ static void on_conn_error(tirtc_conn_t hconn, int error)
         (device_demo_session_t *)TiRtcConnGetUserData(hconn);
 
     log_message(stdout,
-                "connection ended: %s",
+                "connection ended: hconn=%p reason=%s",
+                (void *)hconn,
                 TiRtcGetErrorStr(error));
     if (session == NULL) {
         return;
@@ -481,7 +491,7 @@ static void on_request_key_frame(tirtc_conn_t hconn, uint8_t stream_id)
         return;
     }
     device_demo_streamer_request_key_frame(session->streamer);
-    log_message(stdout, "key frame requested: stream_id=%u", stream_id);
+    log_message(stdout, "remote requested I frame: stream_id=%u", stream_id);
 }
 
 static int wait_for_sdk_stop(void)

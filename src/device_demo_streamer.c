@@ -53,6 +53,12 @@ struct device_demo_streamer {
     uint64_t audio_packets_sent;
     uint64_t video_frames_sent;
     uint64_t loop_count;
+    uint64_t stream_started_at_us;
+    int first_audio_logged;
+    int first_video_logged;
+    int first_key_frame_logged;
+    int first_send_wait_logged;
+    int startup_video_pending;
     int playback_active;
     int audio_finished;
     int video_finished;
@@ -78,6 +84,11 @@ static void sleep_for_us(uint64_t duration_us)
     delay.tv_nsec = (long)(duration_us % kMicrosecondsPerSecond) * 1000L;
     while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {
     }
+}
+
+static void sleep_loop_interval(void)
+{
+    sleep_for_us((uint64_t)kLoopPollIntervalMs * kMicrosecondsPerMillisecond);
 }
 
 static uint64_t monotonic_now_us(void)
@@ -445,7 +456,62 @@ static int load_next_video_frame(device_demo_streamer_t *streamer)
     return 1;
 }
 
-static int reset_loop_sources(device_demo_streamer_t *streamer)
+static void clear_stream_start_logs(device_demo_streamer_t *streamer)
+{
+    streamer->stream_started_at_us = 0;
+    streamer->first_audio_logged = 0;
+    streamer->first_video_logged = 0;
+    streamer->first_key_frame_logged = 0;
+    streamer->first_send_wait_logged = 0;
+}
+
+static void reset_stream_start_logs(device_demo_streamer_t *streamer)
+{
+    clear_stream_start_logs(streamer);
+    streamer->stream_started_at_us = monotonic_now_us();
+}
+
+static void maybe_log_stream_start_event(device_demo_streamer_t *streamer,
+                                         int is_audio,
+                                         int is_key_frame,
+                                         uint64_t pts_us)
+{
+    uint64_t elapsed_ms;
+
+    if (streamer->stream_started_at_us == 0) {
+        return;
+    }
+
+    elapsed_ms = (monotonic_now_us() - streamer->stream_started_at_us) /
+                 kMicrosecondsPerMillisecond;
+    if (is_audio && !streamer->first_audio_logged) {
+        streamer->first_audio_logged = 1;
+        streamer_log(stdout,
+                     "first audio packet sent at +%llums pts=%llums",
+                     (unsigned long long)elapsed_ms,
+                     (unsigned long long)(pts_us / kMicrosecondsPerMillisecond));
+        return;
+    }
+    if (!is_audio && !streamer->first_video_logged) {
+        streamer->first_video_logged = 1;
+        streamer_log(stdout,
+                     "first video frame sent at +%llums pts=%llums key=%s",
+                     (unsigned long long)elapsed_ms,
+                     (unsigned long long)(pts_us / kMicrosecondsPerMillisecond),
+                     is_key_frame ? "yes" : "no");
+    }
+    if (!is_audio && is_key_frame && !streamer->first_key_frame_logged) {
+        streamer->first_key_frame_logged = 1;
+        streamer_log(stdout,
+                     "first I frame sent at +%llums pts=%llums",
+                     (unsigned long long)elapsed_ms,
+                     (unsigned long long)(pts_us / kMicrosecondsPerMillisecond));
+    }
+}
+
+static int restart_media_from_beginning(device_demo_streamer_t *streamer,
+                                        const char *reason,
+                                        int reset_pts)
 {
     if (fseek(streamer->audio_file, 0L, SEEK_SET) != 0) {
         return -1;
@@ -464,6 +530,22 @@ static int reset_loop_sources(device_demo_streamer_t *streamer)
 
     streamer->audio_finished = 0;
     streamer->video_finished = 0;
+    if (reset_pts) {
+        streamer->audio_next_pts_us = 0;
+        streamer->video_next_pts_us = 0;
+    }
+    streamer_log(stdout, "%s", reason);
+    return 0;
+}
+
+static int reset_loop_sources(device_demo_streamer_t *streamer)
+{
+    if (restart_media_from_beginning(streamer,
+                                     "rewound media to the first access unit",
+                                     0) != 0) {
+        return -1;
+    }
+
     streamer->loop_count += 1;
     streamer_log(stdout, "loop rewind #%llu", (unsigned long long)streamer->loop_count);
     return 0;
@@ -473,6 +555,7 @@ static int send_audio_packet(device_demo_streamer_t *streamer)
 {
     uint8_t packet[kAudioPacketBytes];
     size_t bytes_read = fread(packet, 1, sizeof(packet), streamer->audio_file);
+    uint64_t packet_pts_us = streamer->audio_next_pts_us;
     TIRTCFRAMEINFO frame_info;
     int send_result;
 
@@ -502,6 +585,7 @@ static int send_audio_packet(device_demo_streamer_t *streamer)
                      TiRtcGetErrorStr(send_result));
     } else {
         streamer->audio_packets_sent += 1;
+        maybe_log_stream_start_event(streamer, 1, 0, packet_pts_us);
     }
     streamer->audio_next_pts_us +=
         (uint64_t)kAudioPacketDurationMs * kMicrosecondsPerMillisecond;
@@ -526,6 +610,7 @@ static int advance_to_next_key_frame(device_demo_streamer_t *streamer)
 static int send_video_frame_now(device_demo_streamer_t *streamer, int force_immediate_pts)
 {
     TIRTCFRAMEINFO frame_info;
+    uint64_t frame_pts_us;
     int send_result;
 
     if (!streamer->current_video_ready) {
@@ -541,20 +626,28 @@ static int send_video_frame_now(device_demo_streamer_t *streamer, int force_imme
             streamer->video_next_pts_us = streamer->audio_next_pts_us;
         }
     }
-    frame_info.ts = (uint32_t)(streamer->video_next_pts_us / kMicrosecondsPerMillisecond);
+    frame_pts_us = streamer->video_next_pts_us;
+    frame_info.ts = (uint32_t)(frame_pts_us / kMicrosecondsPerMillisecond);
     frame_info.length = (uint32_t)streamer->current_video_frame.size;
 
     send_result = TiRtcSendVideoStream(streamer->hconn,
                                        &frame_info,
                                        streamer->current_video_frame.data);
+    if (send_result == TIRTC_E_INVALID_HANDLE) {
+        return 0;
+    }
     if (send_result < 0) {
         streamer_log(stderr,
                      "video send failed: %s",
                      TiRtcGetErrorStr(send_result));
-    } else {
-        streamer->video_frames_sent += 1;
+        return -1;
     }
 
+    streamer->video_frames_sent += 1;
+    maybe_log_stream_start_event(streamer,
+                                 0,
+                                 streamer->current_video_frame.is_key_frame,
+                                 frame_pts_us);
     streamer->video_next_pts_us += kMicrosecondsPerSecond / kVideoFps;
     if (load_next_video_frame(streamer) < 0) {
         return -1;
@@ -594,6 +687,92 @@ static void maybe_log_heartbeat(device_demo_streamer_t *streamer, uint64_t now_u
                  (unsigned long long)streamer->loop_count);
 }
 
+static int handle_startup_video_pending(device_demo_streamer_t *streamer,
+                                        int *out_handled)
+{
+    int send_result;
+
+    *out_handled = 0;
+    if (!streamer->startup_video_pending) {
+        return 0;
+    }
+
+    *out_handled = 1;
+    if (!streamer->current_video_ready || !streamer->current_video_frame.is_key_frame) {
+        if (restart_media_from_beginning(streamer,
+                                        "rewound media to cache startup I frame",
+                                        1) != 0) {
+            streamer_log(stderr, "failed to rewind media for startup I frame");
+            return -1;
+        }
+    }
+
+    send_result = send_video_frame_now(streamer, 1);
+    if (send_result < 0) {
+        streamer_log(stderr, "startup I frame send failed");
+        return -1;
+    }
+    if (send_result == 0) {
+        if (!streamer->first_send_wait_logged) {
+            streamer->first_send_wait_logged = 1;
+            streamer_log(stdout,
+                         "connection accepted but media path is not writable yet; caching startup I frame");
+        }
+        sleep_loop_interval();
+        return 0;
+    }
+
+    streamer->startup_video_pending = 0;
+    streamer->first_send_wait_logged = 0;
+    streamer->playback_active = 0;
+    streamer_log(stdout, "startup I frame flushed; entering steady streaming");
+    return 0;
+}
+
+static int handle_requested_key_frame(device_demo_streamer_t *streamer,
+                                      int force_key_frame,
+                                      int *out_handled)
+{
+    int send_result;
+
+    *out_handled = 0;
+    if (!force_key_frame) {
+        return 0;
+    }
+
+    *out_handled = 1;
+    if (advance_to_next_key_frame(streamer) != 0) {
+        streamer_log(stderr, "failed to advance to requested key frame");
+        return -1;
+    }
+    if (streamer->video_finished || !streamer->current_video_ready) {
+        return 0;
+    }
+
+    streamer_log(stdout, "sending requested I frame immediately");
+    send_result = send_video_frame_now(streamer, 1);
+    if (send_result < 0) {
+        streamer_log(stderr, "immediate key frame send failed");
+        return -1;
+    }
+    if (send_result == 0) {
+        pthread_mutex_lock(&streamer->mutex);
+        streamer->force_key_frame = 1;
+        pthread_mutex_unlock(&streamer->mutex);
+        if (!streamer->first_send_wait_logged) {
+            streamer->first_send_wait_logged = 1;
+            streamer_log(stdout,
+                         "video path not writable yet; retrying requested I frame");
+        }
+        sleep_loop_interval();
+        return 0;
+    }
+
+    streamer->first_send_wait_logged = 0;
+    streamer->playback_active = 0;
+    return 0;
+}
+
 static void *streamer_worker_main(void *opaque)
 {
     device_demo_streamer_t *streamer = (device_demo_streamer_t *)opaque;
@@ -621,27 +800,28 @@ static void *streamer_worker_main(void *opaque)
         }
         if (!streaming_enabled) {
             streamer->playback_active = 0;
-            sleep_for_us((uint64_t)kLoopPollIntervalMs * 1000ULL);
+            sleep_loop_interval();
             continue;
         }
 
-        if (force_key_frame) {
-            if (advance_to_next_key_frame(streamer) != 0) {
-                streamer_log(stderr, "failed to advance to requested key frame");
+        {
+            int handled = 0;
+
+            if (handle_startup_video_pending(streamer, &handled) != 0) {
                 break;
             }
-            if (!streamer->video_finished && streamer->current_video_ready) {
-                streamer_log(stdout, "forcing immediate key frame for newly accepted client");
-                if (send_video_frame_now(streamer, 1) < 0) {
-                    streamer_log(stderr, "immediate key frame send failed");
-                    break;
-                }
-                streamer->playback_active = 0;
+            if (handled) {
+                continue;
+            }
+            if (handle_requested_key_frame(streamer, force_key_frame, &handled) != 0) {
+                break;
+            }
+            if (handled) {
                 continue;
             }
         }
 
-        if (streaming_enabled && streamer->audio_finished && streamer->video_finished) {
+        if (streamer->audio_finished && streamer->video_finished) {
             if (reset_loop_sources(streamer) != 0) {
                 streamer_log(stderr, "failed to rewind media loop");
                 break;
@@ -670,7 +850,7 @@ static void *streamer_worker_main(void *opaque)
             continue;
         }
 
-        if (streaming_enabled && !streamer->audio_finished &&
+        if (!streamer->audio_finished &&
             streamer->audio_next_pts_us <= streamer->video_next_pts_us) {
             if (send_audio_packet(streamer) < 0) {
                 streamer_log(stderr, "audio loop failed");
@@ -679,15 +859,21 @@ static void *streamer_worker_main(void *opaque)
             continue;
         }
 
-        if (streaming_enabled && !streamer->video_finished) {
-            if (send_video_frame_now(streamer, 0) < 0) {
+        if (!streamer->video_finished) {
+            int send_result = send_video_frame_now(streamer, 0);
+
+            if (send_result < 0) {
                 streamer_log(stderr, "video loop failed");
                 break;
+            }
+            if (send_result == 0) {
+                sleep_loop_interval();
+                continue;
             }
             continue;
         }
 
-        if (streaming_enabled && !streamer->audio_finished) {
+        if (!streamer->audio_finished) {
             if (send_audio_packet(streamer) < 0) {
                 streamer_log(stderr, "audio loop failed");
                 break;
@@ -695,7 +881,7 @@ static void *streamer_worker_main(void *opaque)
             continue;
         }
 
-        sleep_for_us((uint64_t)kLoopPollIntervalMs * 1000ULL);
+        sleep_loop_interval();
     }
 
     streamer_log(stdout,
@@ -801,11 +987,20 @@ void device_demo_streamer_destroy(device_demo_streamer_t *streamer)
 }
 
 void device_demo_streamer_set_streaming_enabled(device_demo_streamer_t *streamer,
-                                                  int enabled)
+                                                int enabled)
 {
     pthread_mutex_lock(&streamer->mutex);
     if (!!streamer->streaming_enabled != !!enabled) {
         streamer->playback_active = 0;
+        if (enabled) {
+            streamer->startup_video_pending = 1;
+            streamer->force_key_frame = 0;
+            reset_stream_start_logs(streamer);
+        } else {
+            streamer->startup_video_pending = 0;
+            streamer->force_key_frame = 0;
+            clear_stream_start_logs(streamer);
+        }
     }
     streamer->streaming_enabled = enabled != 0;
     pthread_mutex_unlock(&streamer->mutex);
