@@ -41,7 +41,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --help)
-      printf 'Usage: %s --endpoint <url> --device-id <id> --device-secret-key <key>\n' "$0"
+      printf 'Usage: %s [--endpoint <url>] --device-id <id> --device-secret-key <key>\n' "$0"
       exit 0
       ;;
     *)
@@ -51,7 +51,6 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-require_value endpoint "$endpoint"
 require_value device_id "$device_id"
 require_value device_secret_key "$device_secret_key"
 require_file "$repo_root/assets/audio.g711a"
@@ -59,7 +58,13 @@ require_file "$repo_root/assets/video.h264"
 require_file "$binary"
 
 cd "$repo_root"
+if [ -n "$endpoint" ]; then
+  exec "$binary" \
+    --endpoint "$endpoint" \
+    --device-id "$device_id" \
+    --device-secret-key "$device_secret_key"
+fi
+
 exec "$binary" \
-  --endpoint "$endpoint" \
   --device-id "$device_id" \
   --device-secret-key "$device_secret_key"

@@ -74,7 +74,7 @@ static void signal_handler(int signal_number)
 static void print_usage(const char *program_name)
 {
     fprintf(stderr,
-            "Usage: %s --endpoint <url> --device-id <id> --device-secret-key <key>\n",
+            "Usage: %s [--endpoint <url>] --device-id <id> --device-secret-key <key>\n",
             program_name);
 }
 
@@ -144,8 +144,7 @@ static int parse_arguments(int argc,
         return -1;
     }
 
-    if (validate_required_value("endpoint", out_config->endpoint) != 0 ||
-        validate_required_value("device_id", out_config->device_id) != 0 ||
+    if (validate_required_value("device_id", out_config->device_id) != 0 ||
         validate_required_value("device_secret_key", out_config->device_secret_key) != 0) {
         return -1;
     }
@@ -575,12 +574,17 @@ int main(int argc, char **argv)
     TiRtcLogConfig(1, NULL, 0);
     TiRtcLogSetLevel((int)kSdkLogLevel);
 
-    if (TiRtcSetOption(TIRTC_OPT_SERVICE_ENDPOINT,
-                       config.endpoint,
-                       (uint32_t)strlen(config.endpoint)) != 0) {
-        log_message(stderr, "failed to set service endpoint");
-        TiRtcUninit();
-        return 1;
+    if (config.endpoint != NULL && config.endpoint[0] != '\0') {
+        if (TiRtcSetOption(TIRTC_OPT_SERVICE_ENDPOINT,
+                           config.endpoint,
+                           (uint32_t)strlen(config.endpoint)) != 0) {
+            log_message(stderr, "failed to set service endpoint");
+            TiRtcUninit();
+            return 1;
+        }
+        log_message(stdout, "using endpoint override: %s", config.endpoint);
+    } else {
+        log_message(stdout, "using TiRTC default service endpoint");
     }
 
     log_message(stdout,
