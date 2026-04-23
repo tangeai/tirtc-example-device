@@ -1,113 +1,135 @@
-# Linux Device TiRTC Nano Uplink Demo
+# Linux 设备端送流 Demo
 
-This demo is a Linux x86_64 device-side reference for one narrow flow only:
+这个仓库是一个最小 Linux 设备端参考 Demo，代码阅读主入口是 `src/main.c`。
 
-`start -> wait for client -> stream fixed assets -> keep waiting after disconnect`
+Demo 只演示这一条固定流程：
 
-It is intentionally not a product shell. The only required inputs are:
+`启动 -> 等待客户端连接 -> 立即送固定音视频 -> 断开后继续等待`
 
-- `endpoint`
-- `device_id`
-- `device_secret_key`
+## 目录结构
 
-The only media inputs are kept under `assets/` and are expected to be shipped in the release zip, not from source control.
+```text
+.
+├── 3rd/
+│   ├── include/
+│   │   ├── basedef.h
+│   │   └── tiRTC.h
+│   └── lib/
+│       └── libtirtc.a
+├── assets/
+│   ├── audio.g711a
+│   └── video.h264
+├── script/
+│   ├── build.sh
+│   └── run_demo.sh
+├── src/
+│   ├── device_demo_streamer.c
+│   ├── device_demo_streamer.h
+│   └── main.c
+├── Makefile
+└── README.md
+```
 
+各目录职责如下：
 
+- `src/main.c`：进程入口、参数解析、TiRTC 生命周期、连接管理。
+- `src/device_demo_streamer.c/.h`：固定音视频文件读取、切片、循环送流。
+- `script/build.sh`：编译入口。
+- `script/run_demo.sh`：运行入口。
+- `assets/`：固定媒体文件。
+- `3rd/`：TiRTC Nano 头文件和静态库。
 
-- `assets/audio.g711a`
-- `assets/video.h264`
+## 运行前需要准备什么
 
-The demo keeps stream IDs fixed so the existing Flutter example can play it directly:
+源码仓库默认不包含 `assets/` 和 `3rd/` 内容，这两部分需要提前下载并放到下面位置：
 
-- audio stream ID: `10`
-- video stream ID: `11`
+### 1. 下载媒体文件
 
-## What It Supports
+放到：
 
-- Linux x86_64 only
-- C source only
-- one active client connection at a time
-- fixed looping G711A + H264 uplink
-- keep running after disconnect and wait for the next client
+```text
+assets/audio.g711a
+assets/video.h264
+```
 
-## What It Does Not Support
+### 2. 下载 TiRTC Nano 头文件和静态库
 
-- macOS / Windows / Android
-- dynamic assets or stream IDs
-- command channel logic
-- stream messages
-- multi-client fan-out
-- real camera or microphone capture
+放到：
 
-## Build
+```text
+3rd/include/tiRTC.h
+3rd/include/basedef.h
+3rd/lib/libtirtc.a
+```
+
+其中 `libtirtc.a` 需要基于 `.refers/tirtc-nano/TiRTC` 自行编译得到，再放入 `3rd/lib/`。
+
+## 编译
+
+要求：
+
+- Linux x86_64
+- 已安装 `gcc` 和 `make`
+
+执行：
 
 ```sh
 ./script/build.sh
 ```
 
-`build.sh` fails fast when these files are missing:
+编译成功后输出：
+
+```text
+build/linux_device_uplink_demo
+```
+
+如果缺少下面任一文件，`build.sh` 会直接失败：
 
 - `3rd/include/tiRTC.h`
 - `3rd/include/basedef.h`
 - `3rd/lib/libtirtc.a`
 
-The bundled `libtirtc.a` is expected to be built from `.refers/tirtc-nano/TiRTC` before delivery, then copied into `3rd/lib/` for the final demo bundle.
+## 运行
 
-The binary is written to:
+Demo 只接受三个输入参数：
 
-```sh
-build/linux_device_uplink_demo
-```
+- `endpoint`
+- `device_id`
+- `device_secret_key`
 
-## Run
+执行：
 
 ```sh
 ./script/run_demo.sh \
-  --endpoint https://your-endpoint.example.com \
+  --endpoint http://your-endpoint \
   --device-id your_device_id \
   --device-secret-key your_device_secret_key
 ```
 
-`run_demo.sh` fails fast when any required argument is missing, or when either of these files is missing:
+例如：
+
+```sh
+./script/run_demo.sh \
+  --endpoint http://ep-test-tirtc.tange365.com \
+  --device-id TESTFENGJUN4 \
+  --device-secret-key PRoGgX6lDelY4y9df2WW9U9NR10rBfyx
+```
+
+如果缺少下面任一文件，`run_demo.sh` 会直接失败：
 
 - `assets/audio.g711a`
 - `assets/video.h264`
+- `build/linux_device_uplink_demo`
 
-## Expected Runtime Flow
+## 运行行为
 
-After startup, the demo should log the same high-level lifecycle every time:
+启动后预期行为如下：
 
-1. validate startup inputs
-2. start TiRTC device service
-3. wait for client connections
-4. accept one client connection
-5. send an IDR frame immediately after the client connection is accepted, then continue normal audio/video pacing
-6. rewind assets and continue with continuous timestamps
-7. stop that connection after disconnect
-8. return to waiting for the next client
-
-Hot-path packet logs are intentionally omitted. You should only see lifecycle logs, loop rewind logs, and low-frequency streaming heartbeat logs.
-
-## Flutter Playback Smoke
-
-Use the existing Flutter example in Matrix:
-
-`products/sdk/flutter/tirtc_av_kit/example`
-
-The example already defaults to:
-
-- `audio_stream_id = 10`
-- `video_stream_id = 11`
-
-On the Flutter configure page, fill:
-
-- `endpoint`: the same endpoint passed to this demo
-- `remote_id`: the `device_id` passed to this demo
-- `token`: a valid connect token for that device
-- keep the default stream IDs `10` and `11`
-
-Then connect. Expected behavior:
-
-- video sends an immediate IDR frame after connect so the client can render quickly, then audio/video continue in normal pacing
-- playback continues while the fixed assets loop
-- if the Flutter side disconnects, the Linux demo stays alive and waits for the next client
+1. 校验启动参数和必需文件。
+2. 启动 TiRTC 设备端。
+3. 等待客户端连接。
+4. 客户端连接后立即开始送流。
+5. 首个视频发送优先输出 I 帧，尽快出图。
+6. 音视频固定循环送流。
+7. 客户端断开后停止当前连接送流。
+8. 进程继续等待下一次连接。
