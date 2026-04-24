@@ -29,8 +29,16 @@ typedef struct {
     uint8_t *data;
     size_t size;
     size_t capacity;
+    uint64_t pts_us;
     int is_key_frame;
 } video_frame_t;
+
+typedef struct {
+    uint8_t *data;
+    size_t capacity;
+    size_t size;
+    uint64_t pts_us;
+} audio_packet_t;
 
 struct device_demo_streamer {
     tirtc_conn_t hconn;
@@ -452,6 +460,8 @@ static int load_next_video_frame(device_demo_streamer_t *streamer)
         return 0;
     }
 
+    streamer->current_video_frame.pts_us = streamer->video_next_pts_us;
+    streamer->video_next_pts_us += kMicrosecondsPerSecond / kVideoFps;
     streamer->current_video_ready = 1;
     return 1;
 }
@@ -520,6 +530,10 @@ static int restart_media_from_beginning(device_demo_streamer_t *streamer,
     if (annexb_reader_reset(&streamer->video_reader) != 0) {
         return -1;
     }
+    if (reset_pts) {
+        streamer->audio_next_pts_us = 0;
+        streamer->video_next_pts_us = 0;
+    }
     if (load_next_video_frame(streamer) <= 0) {
         return -1;
     }
@@ -530,10 +544,6 @@ static int restart_media_from_beginning(device_demo_streamer_t *streamer,
 
     streamer->audio_finished = 0;
     streamer->video_finished = 0;
-    if (reset_pts) {
-        streamer->audio_next_pts_us = 0;
-        streamer->video_next_pts_us = 0;
-    }
     streamer_log(stdout, "%s", reason);
     return 0;
 }
@@ -551,14 +561,11 @@ static int reset_loop_sources(device_demo_streamer_t *streamer)
     return 0;
 }
 
-static int send_audio_packet(device_demo_streamer_t *streamer)
+static int read_audio_packet(device_demo_streamer_t *streamer, audio_packet_t *out_packet)
 {
-    uint8_t packet[kAudioPacketBytes];
-    size_t bytes_read = fread(packet, 1, sizeof(packet), streamer->audio_file);
-    uint64_t packet_pts_us = streamer->audio_next_pts_us;
-    TIRTCFRAMEINFO frame_info;
-    int send_result;
+    size_t bytes_read;
 
+    bytes_read = fread(out_packet->data, 1, out_packet->capacity, streamer->audio_file);
     if (bytes_read == 0) {
         if (ferror(streamer->audio_file)) {
             return -1;
@@ -566,36 +573,56 @@ static int send_audio_packet(device_demo_streamer_t *streamer)
         streamer->audio_finished = 1;
         return 0;
     }
-    if (bytes_read != sizeof(packet)) {
+    if (bytes_read != out_packet->capacity) {
         streamer_log(stderr, "audio.g711a size is not aligned to 320-byte packets");
         return -1;
+    }
+
+    out_packet->size = bytes_read;
+    out_packet->pts_us = streamer->audio_next_pts_us;
+    streamer->audio_next_pts_us +=
+        (uint64_t)kAudioPacketDurationMs * kMicrosecondsPerMillisecond;
+    return 1;
+}
+
+static int send_audio_packet(device_demo_streamer_t *streamer)
+{
+    uint8_t packet_data[kAudioPacketBytes];
+    audio_packet_t packet;
+    TIRTCFRAMEINFO frame_info;
+    int read_result;
+    int send_result;
+
+    memset(&packet, 0, sizeof(packet));
+    packet.data = packet_data;
+    packet.capacity = sizeof(packet_data);
+    read_result = read_audio_packet(streamer, &packet);
+    if (read_result <= 0) {
+        return read_result;
     }
 
     memset(&frame_info, 0, sizeof(frame_info));
     frame_info.stream_id = kAudioStreamId;
     frame_info.media = TIRTC_AUDIO_ALAW;
     frame_info.flags = kAudioSampleSpec;
-    frame_info.ts = (uint32_t)(streamer->audio_next_pts_us / kMicrosecondsPerMillisecond);
-    frame_info.length = (uint32_t)bytes_read;
+    frame_info.ts = (uint32_t)(packet.pts_us / kMicrosecondsPerMillisecond);
+    frame_info.length = (uint32_t)packet.size;
 
-    send_result = TiRtcSendAudioStream(streamer->hconn, &frame_info, packet);
+    send_result = TiRtcSendAudioStream(streamer->hconn, &frame_info, packet.data);
     if (send_result < 0) {
         streamer_log(stderr,
                      "audio send failed: %s",
                      TiRtcGetErrorStr(send_result));
     } else {
         streamer->audio_packets_sent += 1;
-        maybe_log_stream_start_event(streamer, 1, 0, packet_pts_us);
+        maybe_log_stream_start_event(streamer, 1, 0, packet.pts_us);
     }
-    streamer->audio_next_pts_us +=
-        (uint64_t)kAudioPacketDurationMs * kMicrosecondsPerMillisecond;
     return 1;
 }
 
 static int advance_to_next_key_frame(device_demo_streamer_t *streamer)
 {
     while (streamer->current_video_ready && !streamer->current_video_frame.is_key_frame) {
-        streamer->video_next_pts_us += kMicrosecondsPerSecond / kVideoFps;
         if (load_next_video_frame(streamer) < 0) {
             return -1;
         }
@@ -607,7 +634,7 @@ static int advance_to_next_key_frame(device_demo_streamer_t *streamer)
     return 0;
 }
 
-static int send_video_frame_now(device_demo_streamer_t *streamer, int force_immediate_pts)
+static int send_video_frame_now(device_demo_streamer_t *streamer)
 {
     TIRTCFRAMEINFO frame_info;
     uint64_t frame_pts_us;
@@ -621,12 +648,7 @@ static int send_video_frame_now(device_demo_streamer_t *streamer, int force_imme
     frame_info.stream_id = kVideoStreamId;
     frame_info.media = TIRTC_VIDEO_H264;
     frame_info.flags = streamer->current_video_frame.is_key_frame ? TIRTC_FRAME_FLAG_KEY_FRAME : 0;
-    if (force_immediate_pts) {
-        if (streamer->audio_next_pts_us < streamer->video_next_pts_us) {
-            streamer->video_next_pts_us = streamer->audio_next_pts_us;
-        }
-    }
-    frame_pts_us = streamer->video_next_pts_us;
+    frame_pts_us = streamer->current_video_frame.pts_us;
     frame_info.ts = (uint32_t)(frame_pts_us / kMicrosecondsPerMillisecond);
     frame_info.length = (uint32_t)streamer->current_video_frame.size;
 
@@ -648,7 +670,6 @@ static int send_video_frame_now(device_demo_streamer_t *streamer, int force_imme
                                  0,
                                  streamer->current_video_frame.is_key_frame,
                                  frame_pts_us);
-    streamer->video_next_pts_us += kMicrosecondsPerSecond / kVideoFps;
     if (load_next_video_frame(streamer) < 0) {
         return -1;
     }
@@ -665,8 +686,9 @@ static uint64_t earliest_enabled_pts_us(device_demo_streamer_t *streamer,
     uint64_t audio_pts = (audio_enabled && !streamer->audio_finished)
                              ? streamer->audio_next_pts_us
                              : UINT64_MAX;
-    uint64_t video_pts = (video_enabled && !streamer->video_finished)
-                             ? streamer->video_next_pts_us
+    uint64_t video_pts = (video_enabled && !streamer->video_finished &&
+                          streamer->current_video_ready)
+                             ? streamer->current_video_frame.pts_us
                              : UINT64_MAX;
 
     return audio_pts < video_pts ? audio_pts : video_pts;
@@ -707,7 +729,7 @@ static int handle_startup_video_pending(device_demo_streamer_t *streamer,
         }
     }
 
-    send_result = send_video_frame_now(streamer, 1);
+    send_result = send_video_frame_now(streamer);
     if (send_result < 0) {
         streamer_log(stderr, "startup I frame send failed");
         return -1;
@@ -750,7 +772,7 @@ static int handle_requested_key_frame(device_demo_streamer_t *streamer,
     }
 
     streamer_log(stdout, "sending requested I frame immediately");
-    send_result = send_video_frame_now(streamer, 1);
+    send_result = send_video_frame_now(streamer);
     if (send_result < 0) {
         streamer_log(stderr, "immediate key frame send failed");
         return -1;
@@ -851,7 +873,8 @@ static void *streamer_worker_main(void *opaque)
         }
 
         if (!streamer->audio_finished &&
-            streamer->audio_next_pts_us <= streamer->video_next_pts_us) {
+            (!streamer->current_video_ready ||
+             streamer->audio_next_pts_us <= streamer->current_video_frame.pts_us)) {
             if (send_audio_packet(streamer) < 0) {
                 streamer_log(stderr, "audio loop failed");
                 break;
@@ -860,7 +883,7 @@ static void *streamer_worker_main(void *opaque)
         }
 
         if (!streamer->video_finished) {
-            int send_result = send_video_frame_now(streamer, 0);
+            int send_result = send_video_frame_now(streamer);
 
             if (send_result < 0) {
                 streamer_log(stderr, "video loop failed");
