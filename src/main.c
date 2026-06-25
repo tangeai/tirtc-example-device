@@ -42,6 +42,8 @@ static device_demo_app_t g_app = {
     .cond = PTHREAD_COND_INITIALIZER,
 };
 static volatile sig_atomic_t g_should_exit = 0;
+static const uint32_t kCmdwGetDeviceStatus = 0x10000;
+static const uint32_t kCmdwDeviceStatusResult = 0x10002;
 
 static void log_message(FILE *stream, const char *fmt, ...)
 {
@@ -425,6 +427,34 @@ static void on_disconnected(tirtc_conn_t hconn)
     session_finalize(session, "on_disconnected");
 }
 
+static void on_command(tirtc_conn_t hconn, uint32_t cmdw, const void *data, uint32_t len)
+{
+    static const char kDeviceStatusRequest[] = "status?";
+    static const char kDeviceStatusResponse[] = "device-ok";
+    int send_result;
+
+    if (cmdw != kCmdwGetDeviceStatus ||
+        data == NULL ||
+        len != (uint32_t)strlen(kDeviceStatusRequest) ||
+        memcmp(data, kDeviceStatusRequest, len) != 0) {
+        return;
+    }
+
+    log_message(stdout, "received status command request: hconn=%p", (void *)hconn);
+    send_result = TiRtcSendCommand(hconn,
+                                   kCmdwDeviceStatusResult,
+                                   kDeviceStatusResponse,
+                                   (uint32_t)strlen(kDeviceStatusResponse));
+    if (send_result != 0) {
+        log_message(stderr,
+                    "failed to send status command response: %s",
+                    TiRtcGetErrorStr(send_result));
+        return;
+    }
+
+    log_message(stdout, "sent status command response: hconn=%p", (void *)hconn);
+}
+
 static int on_subscribe_video(tirtc_conn_t hconn, uint8_t stream_id)
 {
     device_demo_session_t *session =
@@ -543,6 +573,7 @@ int main(int argc, char **argv)
         .on_conn_accepted = on_conn_accepted,
         .on_conn_error = on_conn_error,
         .on_disconnected = on_disconnected,
+        .on_command = on_command,
         .on_request_key_frame = on_request_key_frame,
         .on_subscribe_video = on_subscribe_video,
         .on_unsubscribe_video = on_unsubscribe_video,
