@@ -78,12 +78,16 @@ build/linux-x86_64/device_uplink_demo
 
 ## 更新或替换 SDK
 
-SDK 包浏览地址：
+TiRTC C SDK 下载页：
 
-- macOS arm64: https://repo-sdk.tange-ai.com/service/rest/repository/browse/tirtc-sdks/releases/macos-arm64/
-- Linux x86_64: https://repo-sdk.tange-ai.com/service/rest/repository/browse/tirtc-sdks/releases/linux-x86_64/
+- https://docs.tange.ai/products/tirtc/download.html
 
-下载目标平台的 SDK 包后，解包到工程约定目录：
+在下载页选择和本 Demo 目标平台一致的 SDK 包：
+
+- Linux x86_64: 下载 **Linux x86_64** 对应的 `.tgz` 包，更新 `3rd/linux-x86_64/`
+- macOS arm64: 下载 **macOS arm64 Desktop** standard 对应的 `.tgz` 包，更新 `3rd/macos-arm64/`
+
+SDK 包内包含头文件和二进制库。更新时建议整体替换对应平台目录下的 `include/` 和 `lib/`，避免头文件和库版本不一致；最简单的做法是将目标平台目录重建为下载包内容：
 
 ```sh
 macos_sdk_tgz=3rd/packages/your-macos-sdk.tgz
