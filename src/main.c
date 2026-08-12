@@ -42,12 +42,9 @@ static device_demo_app_t g_app = {
     .cond = PTHREAD_COND_INITIALIZER,
 };
 static volatile sig_atomic_t g_should_exit = 0;
-<<<<<<< HEAD
 static const uint32_t kCmdwGetDeviceStatus = 0x10000;
 static const uint32_t kCmdwDeviceStatusResult = 0x10002;
-=======
 static const char kClientIdSuffix[] = "-12345";
->>>>>>> main
 
 static void log_message(FILE *stream, const char *fmt, ...)
 {
