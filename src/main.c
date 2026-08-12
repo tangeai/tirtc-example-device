@@ -458,6 +458,45 @@ static void on_command(tirtc_conn_t hconn, uint32_t cmdw, const void *data, uint
     log_message(stdout, "sent status command response: hconn=%p", (void *)hconn);
 }
 
+static void on_message(tirtc_conn_t hconn, const TIRTCFRAMEINFO *frame_info, void *data)
+{
+    TIRTCFRAMEINFO response_frame;
+    int send_result;
+
+    const uint8_t kMessageStreamId = 3;
+    const char kMessageRequest[] = "hello";
+    const char kMessageResponse[] = "hi";
+
+    if (frame_info == NULL ||
+        data == NULL ||
+        frame_info->media != TIRTC_MEDIA_MESSAGE ||
+        frame_info->stream_id != kMessageStreamId ||
+        frame_info->length != (uint32_t)strlen(kMessageRequest) ||
+        memcmp(data, kMessageRequest, frame_info->length) != 0) {
+        return;
+    }
+
+    log_message(stdout, "received stream message: hello");
+
+    /* Reply on the same dedicated message stream with the current timestamp. */
+    memset(&response_frame, 0, sizeof(response_frame));
+    response_frame.stream_id = kMessageStreamId;
+    response_frame.media = TIRTC_MEDIA_MESSAGE;
+    response_frame.ts = 123456789; // test timestamp
+    response_frame.length = (uint32_t)strlen(kMessageResponse);
+    send_result = TiRtcSendMessageStream(hconn,
+                                         &response_frame,
+                                         kMessageResponse);
+    if (send_result != 0) {
+        log_message(stderr,
+                    "failed to send stream message response: %s",
+                    TiRtcGetErrorStr(send_result));
+        return;
+    }
+
+    log_message(stdout, "sent stream message response: hi");
+}
+
 static int on_subscribe_video(tirtc_conn_t hconn, uint8_t stream_id)
 {
     device_demo_session_t *session =
@@ -577,6 +616,7 @@ int main(int argc, char **argv)
         .on_conn_error = on_conn_error,
         .on_disconnected = on_disconnected,
         .on_command = on_command,
+        .on_message = on_message,
         .on_request_key_frame = on_request_key_frame,
         .on_subscribe_video = on_subscribe_video,
         .on_unsubscribe_video = on_unsubscribe_video,
