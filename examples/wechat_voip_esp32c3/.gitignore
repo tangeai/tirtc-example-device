@@ -1,0 +1,10 @@
+build*/
+sdkconfig
+sdkconfig.*
+!sdkconfig.defaults
+sdkconfig.old
+main/app_config.local.h
+__pycache__/
+*.wav
+*.log
+!components/tirtc_sdk/lib/libTiRTC.a

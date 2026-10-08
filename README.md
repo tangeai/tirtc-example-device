@@ -12,6 +12,14 @@ ESP32-S3 微信 IoT VoIP 设备端示例放在:
 
 该示例包含 Wi-Fi、时间同步、TiRTC 上线、业务 WebSocket、微信呼入、设备主动呼叫、接听、拒接、挂断和示例音频发送流程.
 
+## ESP32-C3 微信 VoIP 示例
+
+ESP32-C3 / ESP-IDF 5.5.5 / TiRTC 2.5.0 的最小微信 VoIP 验证工程放在：
+
+- [`examples/wechat_voip_esp32c3`](examples/wechat_voip_esp32c3)
+
+该示例包含六位验证码绑定、正式 MQTT、服务端联系人、微信双向呼叫、BOOT 键操作，以及 Flash 预录 Opus 上行和微信 Opus 下行验证流程。
+
 ## 快速开始
 
 平台要求：

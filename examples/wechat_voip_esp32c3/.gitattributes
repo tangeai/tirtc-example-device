@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+*.a binary
+*.opuspkt binary
+components/tirtc_sdk/include/basedef.h whitespace=-blank-at-eol
+components/tirtc_sdk/include/tiRTC.h whitespace=-blank-at-eol
