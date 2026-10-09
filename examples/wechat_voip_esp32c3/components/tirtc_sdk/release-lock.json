@@ -1,7 +1,9 @@
 {
-  "version": "0.1.0",
+  "version": "0.1.1",
   "target": "esp32c3",
   "idf_version": "5.5.5",
   "sdk_version": "2.5.0",
-  "sdk_sha256": "3e423c22a4f4d198702a477457d82ed2ff699c766f29585b15ff076300bc4500"
+  "package_variant": "mini",
+  "package_sha256": "9064cf2c92177dd0ff770ac7a6bab4cba2f29da4fc4a119045aef0cf926acee7",
+  "sdk_sha256": "c1b874ea8d54e0c4ef9d30eb47a1e48f3cea59ad77bc0090ffdfd9e3d43e4c70"
 }

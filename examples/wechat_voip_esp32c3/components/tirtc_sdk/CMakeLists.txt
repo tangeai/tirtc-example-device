@@ -20,4 +20,6 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/release-lock.json")
 endif()
 add_prebuilt_library(tirtc_c3 "${TIRTC_C3_LIBRARY}"
                      REQUIRES lwip mbedtls esp_timer)
-target_link_libraries(${COMPONENT_LIB} PUBLIC tirtc_c3 "$<TARGET_FILE:idf::lwip>")
+target_link_libraries(${COMPONENT_LIB} INTERFACE
+                      "-Wl,--whole-archive" tirtc_c3 "-Wl,--no-whole-archive"
+                      "$<TARGET_FILE:idf::lwip>")

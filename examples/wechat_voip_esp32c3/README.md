@@ -1,6 +1,6 @@
 # TiRTC ESP32-C3 微信 VoIP 快速验证示例
 
-版本：**0.1.0**
+版本：**0.1.1**
 
 环境：**ESP32-C3 / ESP-IDF 5.5.5 / TiRTC 2.5.0 / 微信正式版 / 2 MB Flash**
 
@@ -161,7 +161,7 @@ python tools/rx_to_wav.py serial.log received.wav
 
 ## 7. 内存与固件空间
 
-ESP-IDF 链接结果：应用静态 DRAM 127710 B；应用固件 1379952 B，2 MB Flash 的应用分区剩余 651664 B。
+ESP-IDF 链接结果：应用静态 DRAM 127710 B；应用固件 1378912 B，2 MB Flash 的应用分区剩余 652704 B。
 
 下表运行时水位来自同一工程前一组 SDK 构建，用于估算产品集成余量，不属于本次静态库的真机内存验收结果。更换 SDK 或应用配置后必须重新测量。
 
@@ -277,7 +277,7 @@ Wi-Fi 获得 IP
 -> 保存本次返回的 device-srv / voip-srv / mqtt-srv / tirtc-srv
 ```
 
-本示例拒绝服务发现结果中的明文地址：设备、VoIP 和 TiRTC 地址必须是 `https://`，MQTT 必须是 `mqtts://`。不要把解析出的业务服务器地址写死到固件；私有部署只替换 `APP_DISCOVERY_URL`。
+设备和 VoIP 业务地址必须是 `https://`，MQTT 必须是 `mqtts://`。当前随包 TiRTC 2.5.0 Mini 静态库未启用 SDK 内部 TLS；正式服务返回的 TiRTC HTTPS 别名由适配层映射到 SDK 内置的 `http://ep-tirtc.tange365.com`，不会把 HTTPS 地址传入 SDK。私有部署只替换 `APP_DISCOVERY_URL`，其 `tirtc-srv` 必须提供该 SDK 支持的 HTTP 地址。
 
 网络层迁移检查：
 
@@ -343,7 +343,8 @@ TiRtcInit()
 TiRtcLogSetLevel(...)
 TiRtcSetOption(TIRTC_OPT_DEVICE_SECRET_KEY, device_key)
 TiRtcSetOption(TIRTC_OPT_CLIENT_ID, stable_client_id)
-TiRtcSetOption(TIRTC_OPT_SERVICE_ENDPOINT, discovered_tirtc_url)
+若发现地址不是 SDK 默认地址或其 HTTPS 别名：
+  TiRtcSetOption(TIRTC_OPT_SERVICE_ENDPOINT, discovered_tirtc_url)
 TiRtcStart(device_id, &callbacks)
 -> 等待 TIRTC_EVENT_SYS_STARTED
 ```

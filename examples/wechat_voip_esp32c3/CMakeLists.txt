@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 set(IDF_TARGET "esp32c3" CACHE STRING "Target chip")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
-project(tirtc_c3_wechat_voip VERSION 0.1.0)
+project(tirtc_c3_wechat_voip VERSION 0.1.1)
 if(NOT IDF_TARGET STREQUAL "esp32c3")
     message(FATAL_ERROR "This SDK is for ESP32-C3 only")
 endif()

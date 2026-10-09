@@ -5,6 +5,8 @@
 #include "esp_log.h"
 #define PEER_CAPACITY 2048
 #define TOKEN_CAPACITY 1024
+#define TIRTC_SDK_DEFAULT_ENDPOINT "http://ep-tirtc.tange365.com"
+#define TIRTC_SDK_DEFAULT_ENDPOINT_HTTPS_ALIAS "https://ep-tirtc.tange365.com"
 static rtc_observer_t s_observer;
 static rtc_audio_receiver_t s_audio;
 static bool s_initialized;
@@ -154,9 +156,13 @@ int rtc_start(const char *id, const char *key, const char *client, const char *e
         return rc;
     s_initialized = true;
     TiRtcLogSetLevel(0);
+    bool use_compiled_endpoint =
+        strcmp(endpoint, TIRTC_SDK_DEFAULT_ENDPOINT) == 0 ||
+        strcmp(endpoint, TIRTC_SDK_DEFAULT_ENDPOINT_HTTPS_ALIAS) == 0;
     if (!(rc = option(TIRTC_OPT_DEVICE_SECRET_KEY, key)) &&
-        !(rc = option(TIRTC_OPT_CLIENT_ID, client)) &&
-        !(rc = option(TIRTC_OPT_SERVICE_ENDPOINT, endpoint)))
+        !(rc = option(TIRTC_OPT_CLIENT_ID, client)) && !use_compiled_endpoint)
+        rc = option(TIRTC_OPT_SERVICE_ENDPOINT, endpoint);
+    if (!rc)
         rc = TiRtcStart(id, &s_callbacks);
     if (rc) {
         TiRtcUninit();

@@ -23,6 +23,7 @@
 #define TAG "platform"
 #define JSON_CAPACITY 4096
 #define PLATFORM_TASK_STACK_BYTES 8192
+#define TIRTC_SDK_DEFAULT_ENDPOINT_HTTPS_ALIAS "https://ep-tirtc.tange365.com"
 #define MQTT_READY BIT0
 #define GRANT_RECEIVED BIT1
 #define ACK_RECEIVED BIT2
@@ -177,10 +178,13 @@ static esp_err_t discover(void)
               json_string_copy(root, "mqtt-srv", s_mqtt_url, sizeof(s_mqtt_url)) &&
               json_string_copy(root, "tirtc-srv", s_rtc_url, sizeof(s_rtc_url));
     cJSON_Delete(root);
-    /* Credentials must never be silently downgraded to an unverified transport. */
+    /* Keep the control plane encrypted. The Mini SDK data-plane endpoint is
+     * HTTP-only; the official discovery service advertises its HTTPS alias. */
+    bool rtc_endpoint_ok = strncmp(s_rtc_url, "http://", 7) == 0 ||
+                           strcmp(s_rtc_url, TIRTC_SDK_DEFAULT_ENDPOINT_HTTPS_ALIAS) == 0;
     ok = ok && strncmp(s_device_url, "https://", 8) == 0 &&
          strncmp(s_voip_url, "https://", 8) == 0 && strncmp(s_mqtt_url, "mqtts://", 8) == 0 &&
-         strncmp(s_rtc_url, "https://", 8) == 0;
+         rtc_endpoint_ok;
     if (!ok)
         ESP_LOGE(TAG, "discovery missing service or insecure endpoint; inspect deployment");
     return ok ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
